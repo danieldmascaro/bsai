@@ -1,0 +1,101 @@
+# DB logic overview
+
+Este documento describe la logica de base de datos para el backend ecommerce, con foco en integridad, multi-tenant y reglas de negocio.
+
+## Convenciones generales
+
+- Todos los modelos principales usan UUID como PK, mas `created_at` y `updated_at`.
+- Multi-tenant: el campo `merchant` identifica la tienda y se usa como particion logica.
+- Cuando una tabla no incluye `merchant` (p. ej. `CartLine`), la coherencia se valida a nivel de modelo (`clean`).
+- La persistencia se orienta a Postgres; se usan constraints nativas para unicidad y exclusion, y validaciones en `clean` para reglas de negocio.
+
+## Estructura por dominio
+
+### Catalogo
+
+- `Product` y `ProductVariant` son entidades centrales del catalogo. `ProductVariant` es el SKU vendible.
+- `ProductVariant` define `kind` (DIRECT, BOOKING, WEIGHT) y el precio base.
+- `WeightSettings` y `BookingSettings` guardan configuracion especifica para WEIGHT/BOOKING.
+
+Constraints relevantes:
+- `ProductVariant`: unicidad de `sku` por `merchant`.
+
+Validaciones de consistencia (modelo):
+- `ProductVariant.clean` valida que el `merchant` del producto coincida.
+- `ProductVariant.clean` valida precios y `currency` requeridos.
+- `ProductMedia.clean` valida que la variante pertenece al producto.
+- `BookingSettings.clean` valida duraciones y capacidad.
+- `WeightSettings.clean` valida limites y precios por gramo.
+
+### Carrito
+
+- `Cart` representa el carrito por merchant y puede ser de usuario logueado o invitado.
+- `CartLine` almacena items del carrito con snapshot para UI.
+
+Constraints relevantes:
+- `Cart`: token unico por `merchant` cuando existe (guest carts).
+- `CartLine`: constraint unico por variante para DIRECT/WEIGHT, y por rango horario para BOOKING.
+
+Validaciones de consistencia (modelo):
+- `Cart.clean` valida `currency` y que exista una identidad.
+- `CartLine.clean` valida que `cart.merchant` coincide con `variant` y `resource`.
+- `CartLine.clean` valida cantidades y horarios segun `kind`.
+- `CartAppliedDiscount` no valida en DB; se asume validacion a nivel de servicios/modelo.
+
+### Promociones y cupones
+
+- `Voucher` es un cupon manual con reglas de validez por fechas, monto minimo y tipo de descuento.
+- `Promotion` es una promocion automatica basada en reglas (`predicate`).
+- `VoucherRedemption` registra usos para limites y auditoria.
+
+Constraints relevantes:
+- `Voucher`: unicidad de `code` por `merchant`.
+
+Validaciones de consistencia (modelo):
+- `Voucher.clean` valida rangos de descuentos, currency, fechas y minimo.
+- `Promotion.clean` valida rangos de descuentos, currency y fechas.
+
+### Scheduling (booking)
+
+- `Resource` es un recurso agendable.
+- `AvailabilityRule` define regla semanal, `AvailabilityOverride` define excepciones.
+- `Booking` representa una reserva y se protege contra solapamientos con `ExclusionConstraint` (Postgres).
+
+Constraints relevantes:
+- `Booking`: exclusion constraint evita reservas solapadas por `resource` cuando estan en HOLD/CONFIRMED.
+
+Validaciones de consistencia (modelo):
+- `VariantResource.clean` valida que `variant` y `resource` comparten merchant.
+- `AvailabilityRule.clean` y `AvailabilityOverride.clean` validan rangos y merchant vs resource.
+- `Booking.clean` valida merchant vs resource/variant/customer.
+
+### Inventario
+
+- `Warehouse` representa un deposito por merchant.
+- `Stock` guarda cantidad y asignado por `variant` y `warehouse`.
+
+Constraints relevantes:
+- `Stock`: unicidad `warehouse` + `variant`.
+
+Validaciones de consistencia (modelo):
+- `Stock.clean` valida merchant vs warehouse y variant.
+
+## Notas sobre integridad multi-tenant
+
+Django no soporta constraints con subqueries en CHECK, por lo que la consistencia de `merchant` entre tablas relacionadas se valida en `clean()` y en servicios de dominio. Si necesitas enforcement 100% en la DB, se recomienda:
+
+- Disenar PK compuestas (merchant, id) y usar FK compuestas.
+- O usar triggers en Postgres para validar merchant entre tablas.
+
+## Settings para Postgres
+
+El proyecto esta configurado para Postgres con variables de entorno:
+
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_CONN_MAX_AGE`
+
+Tambien se incluye `django.contrib.postgres` en `INSTALLED_APPS` para rangos y exclusion constraints.
