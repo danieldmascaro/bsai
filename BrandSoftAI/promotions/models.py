@@ -1,6 +1,7 @@
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q, F
 from django.utils import timezone
 
 from core.models import MerchantOwnedModel, TimeStampedUUIDModel, DECIMAL_ZERO
@@ -43,6 +44,21 @@ class Voucher(MerchantOwnedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["merchant", "code"], name="uniq_voucher_code_per_merchant"),
+            models.CheckConstraint(
+                condition=(
+                    Q(discount_type=DiscountType.PERCENT, value__gt=DECIMAL_ZERO, value__lte=Decimal("100.00"))
+                    | (Q(discount_type=DiscountType.FIXED, value__gte=DECIMAL_ZERO) & ~Q(currency=""))
+                ),
+                name="chk_voucher_discount_type_value",
+            ),
+            models.CheckConstraint(
+                condition=Q(min_subtotal_amount__isnull=True) | Q(min_subtotal_amount__gte=DECIMAL_ZERO),
+                name="chk_voucher_min_subtotal_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(start_at__isnull=True) | Q(end_at__isnull=True) | Q(end_at__gt=F("start_at")),
+                name="chk_voucher_date_range",
+            ),
         ]
         indexes = [
             models.Index(fields=["merchant", "is_active"]),
@@ -158,6 +174,19 @@ class Promotion(MerchantOwnedModel):
     class Meta:
         indexes = [
             models.Index(fields=["merchant", "is_active"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(action_type=PromotionActionType.PERCENT, action_value__gt=DECIMAL_ZERO, action_value__lte=Decimal("100.00"))
+                    | (Q(action_type=PromotionActionType.FIXED, action_value__gte=DECIMAL_ZERO) & ~Q(currency=""))
+                ),
+                name="chk_promotion_action_type_value",
+            ),
+            models.CheckConstraint(
+                condition=Q(start_at__isnull=True) | Q(end_at__isnull=True) | Q(end_at__gt=F("start_at")),
+                name="chk_promotion_date_range",
+            ),
         ]
 
     def clean(self):

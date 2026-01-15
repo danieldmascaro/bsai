@@ -2,7 +2,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, F
 
 from core.models import MerchantOwnedModel, TimeStampedUUIDModel, DECIMAL_ZERO
 from catalog.models import VariantKind
@@ -68,6 +68,14 @@ class Cart(MerchantOwnedModel):
             models.Index(fields=["merchant", "token", "status"]),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=~Q(currency=""),
+                name="chk_cart_currency_not_empty",
+            ),
+            models.CheckConstraint(
+                condition=~(Q(user__isnull=True) & Q(customer__isnull=True) & Q(token="")),
+                name="chk_cart_has_identity",
+            ),
             # Token unico por merchant si se usa (guest carts)
             models.UniqueConstraint(
                 fields=["merchant", "token"],
@@ -145,6 +153,36 @@ class CartLine(TimeStampedUUIDModel):
                 condition=Q(kind=VariantKind.BOOKING),
                 name="uniq_cart_booking_same_timespan",
             ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        kind=VariantKind.DIRECT,
+                        quantity_each__gt=0,
+                        quantity_grams=0,
+                        scheduled_start_at__isnull=True,
+                        scheduled_end_at__isnull=True,
+                        resource__isnull=True,
+                    )
+                    | Q(
+                        kind=VariantKind.WEIGHT,
+                        quantity_each=0,
+                        quantity_grams__gt=0,
+                        scheduled_start_at__isnull=True,
+                        scheduled_end_at__isnull=True,
+                        resource__isnull=True,
+                    )
+                    | Q(
+                        kind=VariantKind.BOOKING,
+                        quantity_each__gt=0,
+                        quantity_grams=0,
+                        scheduled_start_at__isnull=False,
+                        scheduled_end_at__isnull=False,
+                        resource__isnull=False,
+                        scheduled_end_at__gt=F("scheduled_start_at"),
+                    )
+                ),
+                name="chk_cartline_kind_quantities_and_times",
+            ),
         ]
 
     def clean(self):
@@ -178,6 +216,8 @@ class CartLine(TimeStampedUUIDModel):
                 raise ValidationError("BOOKING requiere scheduled_start_at y scheduled_end_at.")
             if self.scheduled_end_at <= self.scheduled_start_at:
                 raise ValidationError("scheduled_end_at debe ser > scheduled_start_at.")
+            if not self.resource_id:
+                raise ValidationError({"resource": "BOOKING requiere resource."})
             # Normalmente quantity_each=1, pero puedes usarlo como "cupos"
             if self.quantity_each <= 0:
                 raise ValidationError({"quantity_each": "Debe ser > 0 para BOOKING."})
@@ -219,4 +259,10 @@ class CartAppliedDiscount(TimeStampedUUIDModel):
     class Meta:
         indexes = [
             models.Index(fields=["cart"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(amount__gte=DECIMAL_ZERO),
+                name="chk_cart_applied_discount_amount_nonnegative",
+            ),
         ]

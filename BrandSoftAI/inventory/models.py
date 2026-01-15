@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import F, Q
 
 from core.models import MerchantOwnedModel
 
@@ -31,6 +32,7 @@ class Stock(MerchantOwnedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["warehouse", "variant"], name="uniq_stock_warehouse_variant"),
+            models.CheckConstraint(condition=Q(allocated__lte=F("quantity")), name="chk_allocated_lte_quantity"),
         ]
         indexes = [
             models.Index(fields=["merchant", "variant"]),

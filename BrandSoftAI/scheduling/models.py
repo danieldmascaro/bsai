@@ -1,6 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, F
 from django.utils import timezone
 
 from core.models import MerchantOwnedModel, TimeStampedUUIDModel
@@ -78,6 +78,12 @@ class AvailabilityRule(MerchantOwnedModel):
             models.Index(fields=["merchant", "resource", "weekday"]),
             models.Index(fields=["merchant", "is_active"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_time__gt=F("start_time")),
+                name="chk_availability_rule_time_range",
+            ),
+        ]
 
     def clean(self):
         if self.end_time <= self.start_time:
@@ -106,6 +112,12 @@ class AvailabilityOverride(MerchantOwnedModel):
     class Meta:
         indexes = [
             models.Index(fields=["merchant", "resource", "start_at"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_at__gt=F("start_at")),
+                name="chk_availability_override_range",
+            ),
         ]
 
     def clean(self):

@@ -1,6 +1,7 @@
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q, F
 
 from core.models import MerchantOwnedModel, TimeStampedUUIDModel, DECIMAL_ZERO
 
@@ -58,6 +59,8 @@ class ProductVariant(MerchantOwnedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["merchant", "sku"], name="uniq_sku_per_merchant"),
+            models.CheckConstraint(condition=Q(unit_price_amount__gte=DECIMAL_ZERO), name="chk_variant_unit_price_nonnegative"),
+            models.CheckConstraint(condition=~Q(currency=""), name="chk_variant_currency_not_empty"),
         ]
         indexes = [
             models.Index(fields=["merchant", "sku"]),
@@ -118,6 +121,13 @@ class BookingSettings(TimeStampedUUIDModel):
     # Ej: direccion/meet link:
     location = models.CharField(max_length=255, blank=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(duration_minutes__gt=0), name="chk_booking_settings_duration_gt_zero"),
+            models.CheckConstraint(condition=Q(slot_step_minutes__gt=0), name="chk_booking_settings_slot_step_gt_zero"),
+            models.CheckConstraint(condition=Q(capacity_per_slot__gt=0), name="chk_booking_settings_capacity_gt_zero"),
+        ]
+
     def clean(self):
         if self.slot_step_minutes <= 0:
             raise ValidationError({"slot_step_minutes": "Debe ser > 0."})
@@ -141,6 +151,17 @@ class WeightSettings(TimeStampedUUIDModel):
 
     # Precio por gramo:
     price_per_gram_amount = models.DecimalField(max_digits=12, decimal_places=6)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(step_grams__gt=0), name="chk_weight_settings_step_gt_zero"),
+            models.CheckConstraint(condition=Q(min_grams__gt=0), name="chk_weight_settings_min_gt_zero"),
+            models.CheckConstraint(
+                condition=Q(max_grams__isnull=True) | Q(max_grams__gte=F("min_grams")),
+                name="chk_weight_settings_max_gte_min",
+            ),
+            models.CheckConstraint(condition=Q(price_per_gram_amount__gte=Decimal("0")), name="chk_weight_price_nonnegative"),
+        ]
 
     def clean(self):
         if self.step_grams <= 0:
